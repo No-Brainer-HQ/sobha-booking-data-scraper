@@ -1,0 +1,32 @@
+{
+  "actorSpecification": 1,
+  "name": "sobha-bookings-scraper",
+  "title": "Enterprise Sobha Bookings Scraper",
+  "description": "Production-grade scraper for extracting booking data from Sobha Partner Portal. Built for BARACA Life Capital Real Estate with enterprise security and reliability standards.",
+  "version": "1.0",
+  "meta": {
+    "templateId": "javascript-crawlee-playwright"
+  },
+  "input": "./INPUT_SCHEMA.json",
+  "dockerfile": "./Dockerfile",
+  "readme": "./README.md",
+  "categories": [
+    "REAL_ESTATE"
+  ],
+  "keywords": [
+    "sobha",
+    "bookings",
+    "real-estate",
+    "dubai",
+    "partner-portal",
+    "enterprise",
+    "baraca"
+  ],
+  "author": {
+    "name": "BARACA Life Capital Real Estate",
+    "email": "engineering@baraca.com"
+  },
+  "license": "PROPRIETARY",
+  "storeFeatured": false,
+  "isPublic": false
+}
