@@ -1,0 +1,58 @@
+{
+    "title": "Enterprise Sobha Bookings Scraper",
+    "description": "Extract booking data from Sobha Partner Portal with enterprise-grade reliability.",
+    "type": "object",
+    "schemaVersion": 1,
+    "properties": {
+        "cookieHeader": {
+            "title": "Cookie Header",
+            "type": "string",
+            "description": "Complete cookie header from authenticated browser session.",
+            "editor": "textarea",
+            "isSecret": true
+        },
+        "auraToken": {
+            "title": "Aura Token",
+            "type": "string",
+            "description": "Salesforce Aura authentication token.",
+            "editor": "textarea",
+            "isSecret": true
+        },
+        "auraContext": {
+            "title": "Aura Context",
+            "type": "string",
+            "description": "Salesforce Aura context JSON string.",
+            "editor": "textarea",
+            "isSecret": true
+        },
+        "statusFilter": {
+            "title": "Booking Status Filter",
+            "type": "string",
+            "description": "Filter bookings by status.",
+            "editor": "select",
+            "enum": ["All", "Pending", "Confirmed", "Cancelled", "Completed"],
+            "default": "All"
+        },
+        "dateRangeStart": {
+            "title": "Date Range Start",
+            "type": "string",
+            "description": "Start date for filtering bookings (YYYY-MM-DD).",
+            "editor": "textfield"
+        },
+        "dateRangeEnd": {
+            "title": "Date Range End",
+            "type": "string",
+            "description": "End date for filtering bookings (YYYY-MM-DD).",
+            "editor": "textfield"
+        },
+        "maxResults": {
+            "title": "Maximum Bookings to Fetch",
+            "type": "integer",
+            "description": "Maximum number of bookings to retrieve.",
+            "default": 1000,
+            "minimum": 1,
+            "maximum": 10000
+        }
+    },
+    "required": ["cookieHeader", "auraToken", "auraContext"]
+}
