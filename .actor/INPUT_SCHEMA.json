@@ -1,0 +1,49 @@
+{
+    "title": "Sobha Bookings Scraper",
+    "description": "Extract booking data from Sobha Partner Portal using direct API calls. Requires authentication tokens captured from browser.",
+    "type": "object",
+    "schemaVersion": 1,
+    "properties": {
+        "cookieHeader": {
+            "title": "Cookie Header",
+            "type": "string",
+            "description": "Full Cookie header from browser. Get this from Chrome DevTools > Network tab > any 'aura' request > Headers > Cookie",
+            "editor": "textarea",
+            "prefill": ""
+        },
+        "auraToken": {
+            "title": "Aura Token",
+            "type": "string",
+            "description": "Aura authentication token. Get this from Chrome DevTools > Network tab > any 'aura' request > Payload > aura.token",
+            "editor": "textarea",
+            "prefill": ""
+        },
+        "auraContext": {
+            "title": "Aura Context",
+            "type": "string",
+            "description": "Aura context JSON string. Get this from Chrome DevTools > Network tab > any 'aura' request > Payload > aura.context",
+            "editor": "textarea",
+            "prefill": ""
+        },
+        "years": {
+            "title": "Years to Scrape",
+            "type": "array",
+            "description": "List of years to fetch bookings for. Default is current year.",
+            "editor": "json",
+            "default": [2025],
+            "items": {
+                "type": "integer"
+            },
+            "prefill": [2025]
+        },
+        "maxResults": {
+            "title": "Maximum Results",
+            "type": "integer",
+            "description": "Maximum number of bookings to return.",
+            "default": 10000,
+            "minimum": 1,
+            "maximum": 50000
+        }
+    },
+    "required": ["cookieHeader", "auraToken", "auraContext"]
+}
