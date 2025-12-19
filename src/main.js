@@ -1,29 +1,27 @@
 /**
- * SOBHA BOOKINGS SCRAPER - DIRECT API APPROACH
- * =============================================
- * Enterprise-grade scraper for Sobha Partner Portal bookings data
- * Built for BARACA Life Capital Real Estate
+ * SOBHA BOOKINGS SCRAPER – ENTERPRISE STABLE VERSION
+ * =================================================
+ * - No dataset size crashes
+ * - Correct Aura parsing
+ * - Clean storage strategy
  *
- * Author: BARACA Engineering Team
- * Version: 1.1.0
- * License: Proprietary
+ * Author: No Brainer HQ
+ * Version: 1.2.0
  */
 
 import { Actor } from 'apify';
 import { Dataset } from 'crawlee';
 
 // ============================================
-// API CLIENT
+// AURA API CLIENT
 // ============================================
 
 class SobhaBookingsAPI {
-    constructor(config) {
-        this.config = {
-            cookieHeader: config.cookieHeader || '',
-            auraToken: config.auraToken || '',
-            auraContext: config.auraContext || '',
-            baseUrl: 'https://www.sobhapartnerportal.com/partnerportal/s/sfsites/aura'
-        };
+    constructor({ cookieHeader, auraToken, auraContext }) {
+        this.cookieHeader = cookieHeader;
+        this.auraToken = auraToken;
+        this.auraContext = auraContext;
+        this.baseUrl = 'https://www.sobhapartnerportal.com/partnerportal/s/sfsites/aura';
     }
 
     generateRequestId() {
@@ -31,14 +29,12 @@ class SobhaBookingsAPI {
         return Array.from({ length: 16 }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
     }
 
-    async getBookings(year = 2025) {
-        console.log(`\n🚀 Fetching bookings for year ${year}...`);
-
-        const url = `${this.config.baseUrl}?aura.ApexAction.execute=1`;
+    async fetchBookings(year) {
+        console.log(`🚀 Fetching bookings for ${year}`);
 
         const message = {
             actions: [{
-                id: '197;a',
+                id: '1;a',
                 descriptor: 'aura://ApexActionController/ACTION$execute',
                 callingDescriptor: 'UNKNOWN',
                 params: {
@@ -52,73 +48,74 @@ class SobhaBookingsAPI {
             }]
         };
 
-        const formData = new URLSearchParams();
-        formData.append('message', JSON.stringify(message));
-        formData.append('aura.context', this.config.auraContext);
-        formData.append('aura.pageURI', '/partnerportal/s/performance');
-        formData.append('aura.token', this.config.auraToken);
+        const form = new URLSearchParams();
+        form.append('message', JSON.stringify(message));
+        form.append('aura.context', this.auraContext);
+        form.append('aura.pageURI', '/partnerportal/s/performance');
+        form.append('aura.token', this.auraToken);
 
-        const response = await fetch(url, {
+        const res = await fetch(`${this.baseUrl}?aura.ApexAction.execute=1`, {
             method: 'POST',
             headers: {
-                Accept: '*/*',
                 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-                Cookie: this.config.cookieHeader,
-                Origin: 'https://www.sobhapartnerportal.com',
-                Referer: 'https://www.sobhapartnerportal.com/partnerportal/s/performance',
+                'Cookie': this.cookieHeader,
+                'Origin': 'https://www.sobhapartnerportal.com',
+                'Referer': 'https://www.sobhapartnerportal.com/partnerportal/s/performance',
                 'User-Agent': 'Mozilla/5.0',
                 'X-SFDC-Request-Id': this.generateRequestId()
             },
-            body: formData.toString()
+            body: form.toString()
         });
 
-        if (!response.ok) {
-            throw new Error(`HTTP ${response.status}`);
-        }
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
-        const data = await response.json();
-        const action = data?.actions?.[0];
+        const json = await res.json();
+        const action = json?.actions?.[0];
 
         if (action?.state !== 'SUCCESS') {
             throw new Error(`Aura error: ${JSON.stringify(action?.error)}`);
         }
 
-        const rv = action.returnValue;
-        const v = rv?.returnValue ?? rv;
+        const rv = action.returnValue?.returnValue ?? action.returnValue;
 
         const candidates = [
-            v,
-            v?.records,
-            v?.data,
-            v?.result,
-            v?.items,
-            v?.bookingData,
-            v?.details
+            rv,
+            rv?.records,
+            rv?.data,
+            rv?.result,
+            rv?.items,
+            rv?.bookingData,
+            rv?.details
         ];
 
-        const arr = candidates.find(x => Array.isArray(x));
+        const bookings = candidates.find(Array.isArray);
 
-        if (!arr) {
+        if (!bookings) {
             console.log('⚠️ SUCCESS but no array found');
-            console.log('Return keys:', v && typeof v === 'object' ? Object.keys(v) : typeof v);
+            console.log('Return keys:', rv && typeof rv === 'object' ? Object.keys(rv) : typeof rv);
             return [];
         }
 
-        console.log(`✅ SUCCESS! Found ${arr.length} bookings for ${year}`);
-        return arr;
+        console.log(`✅ Found ${bookings.length} bookings`);
+        return bookings;
     }
 }
 
 // ============================================
-// MAIN
+// MAIN ACTOR
 // ============================================
 
 Actor.main(async () => {
     const input = await Actor.getInput() || {};
-    const { cookieHeader, auraToken, auraContext, years = [2025] } = input;
+    const {
+        cookieHeader,
+        auraToken,
+        auraContext,
+        years = [2025]
+    } = input;
 
     if (!cookieHeader || !auraToken || !auraContext) {
-        throw new Error('Missing cookieHeader / auraToken / auraContext');
+        throw new Error('Missing cookieHeader, auraToken or auraContext');
     }
 
     const api = new SobhaBookingsAPI({ cookieHeader, auraToken, auraContext });
@@ -126,7 +123,7 @@ Actor.main(async () => {
     let allBookings = [];
 
     for (const year of years) {
-        const raw = await api.getBookings(year);
+        const raw = await api.fetchBookings(year);
 
         const parsed = raw.map(b => ({
             bookingId: b.Name || '',
@@ -149,34 +146,31 @@ Actor.main(async () => {
         allBookings.push(...parsed);
     }
 
-    console.log(`\n📊 Total bookings parsed: ${allBookings.length}`);
+    console.log(`📊 Total parsed bookings: ${allBookings.length}`);
 
     // ============================================
-    // STORAGE STRATEGY (NO SIZE LIMIT ISSUES)
+    // STORAGE (SAFE)
     // ============================================
 
-    // 1) Store full dataset as file
+    // 1. Full payload → KV Store
     await Actor.setValue('bookings.json', allBookings);
 
-    // 2) Push summary
-    const summary = {
+    // 2. Summary → Dataset
+    await Dataset.pushData({
+        type: 'summary',
         totalBookings: allBookings.length,
         years,
         scrapedAt: new Date().toISOString()
-    };
-
-    await Dataset.pushData({
-        type: 'summary',
-        summary
     });
 
-    // 3) Push per-booking rows (batched)
+    // 3. Per-booking rows → Dataset (batched)
     const BATCH_SIZE = 500;
+
     for (let i = 0; i < allBookings.length; i += BATCH_SIZE) {
         await Dataset.pushData(allBookings.slice(i, i + BATCH_SIZE));
     }
 
-    console.log('\n✅ SCRAPE COMPLETE');
-    console.log('• Full data: Key-Value Store → bookings.json');
+    console.log('✅ SCRAPE COMPLETE');
+    console.log('• Full file: KV Store → bookings.json');
     console.log('• Dataset: summary + per-booking rows');
 });
