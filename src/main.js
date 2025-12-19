@@ -7,6 +7,7 @@
  *
  * Author: No Brainer HQ
  * Version: 1.2.0
+ * reverted back
  */
 
 import { Actor } from 'apify';
