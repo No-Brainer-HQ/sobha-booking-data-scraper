@@ -96,16 +96,31 @@ class SobhaBookingsAPI {
             
             // Parse the Salesforce Aura response
             if (data?.actions?.[0]?.state === 'SUCCESS') {
-                const returnValue = data.actions[0].returnValue?.returnValue || data.actions[0].returnValue;
-                
-                if (Array.isArray(returnValue)) {
-                    console.log(`✅ SUCCESS! Found ${returnValue.length} bookings for ${year}`);
-                    return returnValue;
-                } else {
-                    console.log('⚠️ Unexpected return value structure');
-                    console.log('Return value type:', typeof returnValue);
-                    return [];
-                }
+    const rv = data.actions[0].returnValue;
+    const v = rv?.returnValue ?? rv;
+
+    const candidates = [
+        v,
+        v?.records,
+        v?.data,
+        v?.result,
+        v?.items,
+        v?.bookingData,
+        v?.details,
+    ];
+
+    const arr = candidates.find(x => Array.isArray(x));
+
+    if (arr) {
+        console.log(`✅ SUCCESS! Found ${arr.length} bookings for ${year}`);
+        return arr;
+    }
+
+    console.log('⚠️ SUCCESS but no array found.');
+    console.log('Return value keys:', v && typeof v === 'object' ? Object.keys(v) : typeof v);
+    console.log('Return value preview:', JSON.stringify(v).slice(0, 800));
+    return [];
+}
             } else if (data?.actions?.[0]?.state === 'ERROR') {
                 const error = data.actions[0].error;
                 console.log('❌ API Error:', JSON.stringify(error, null, 2));
