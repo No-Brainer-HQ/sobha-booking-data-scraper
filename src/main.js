@@ -1,39 +1,104 @@
 /**
- * SOBHA BOOKINGS SCRAPER - DIRECT API APPROACH
- * =============================================
- * Enterprise-grade scraper for Sobha Partner Portal bookings data
- * Built for BARACA Life Capital Real Estate
+ * SOBHA ENTERPRISE SCRAPER (PROPERTIES) — SAFE DATASET + SUMMARY KV
+ * Fixes: "Data item is too large" by NEVER pushing a huge wrapper object to Dataset.
+ * Saves:
+ *  - Key-Value Store: SUMMARY (small object)
+ *  - Dataset: each property as its own row (batched + auto-splitting if needed)
  *
- * Author: BARACA Engineering Team
- * Version: 1.0.1
- * License: Proprietary
+ * Input (Apify Actor):
+ * {
+ *   "cookieHeader": "...",
+ *   "auraToken": "...",
+ *   "auraContext": "...",
+ *   "apiParams": { ... },           // optional but REQUIRED for correct filtering in some portal states
+ *   "maxResults": 10000,
+ *   "debug": false
+ * }
  */
 
 import { Actor, Dataset } from 'apify';
 
-class SobhaBookingsAPI {
-    constructor(config) {
-        this.config = {
-            cookieHeader: config.cookieHeader || '',
-            auraToken: config.auraToken || '',
-            auraContext: config.auraContext || '',
-            baseUrl: 'https://www.sobhapartnerportal.com/partnerportal/s/sfsites/aura',
-        };
+const BASE_URL = 'https://www.sobhapartnerportal.com/partnerportal/s/sfsites/aura';
+
+// --------------------
+// DATASET SAFE PUSH
+// --------------------
+async function pushDatasetSafely(items, label = 'rows') {
+    if (!items || items.length === 0) return;
+
+    const stack = [items];
+    let pushed = 0;
+
+    while (stack.length) {
+        const batch = stack.pop();
+
+        try {
+            await Dataset.pushData(batch);
+
+            if (Array.isArray(batch)) pushed += batch.length;
+            else pushed += 1;
+
+            if (pushed % 500 === 0) console.log(`📦 Pushed ${pushed} ${label}...`);
+        } catch (e) {
+            const msg = String(e?.message || e);
+
+            if (!msg.includes('Data item is too large')) throw e;
+
+            // If a single object is too big, you MUST trim fields on that object.
+            if (!Array.isArray(batch)) {
+                console.log('❌ Single record too large. Trim fields in that record before pushing.');
+                throw e;
+            }
+
+            // Split array into halves until push works.
+            if (batch.length <= 1) {
+                stack.push(batch[0]);
+                continue;
+            }
+
+            const mid = Math.ceil(batch.length / 2);
+            const left = batch.slice(0, mid);
+            const right = batch.slice(mid);
+
+            console.log(`⚠️ Batch too large. Splitting ${batch.length} -> ${left.length} + ${right.length}`);
+            stack.push(right);
+            stack.push(left);
+        }
+    }
+
+    console.log(`✅ Finished pushing ${pushed} ${label} to Dataset.`);
+}
+
+// --------------------
+// SOBHA DIRECT API CLIENT (PROPERTIES)
+// --------------------
+class SobhaDirectAPI {
+    constructor({ cookieHeader, auraToken, auraContext, apiParams = {}, debug = false }) {
+        this.cookieHeader = cookieHeader;
+        this.auraToken = auraToken;
+        this.auraContext = auraContext;
+        this.apiParams = apiParams || {};
+        this.debug = debug;
     }
 
     generateRequestId() {
         const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
-        let result = '';
-        for (let i = 0; i < 16; i++) result += chars.charAt(Math.floor(Math.random() * chars.length));
-        return result;
+        let out = '';
+        for (let i = 0; i < 16; i++) out += chars[Math.floor(Math.random() * chars.length)];
+        return out;
     }
 
-    async getBookings(year = 2025) {
-        console.log(`\n🚀 Fetching bookings for year ${year}...`);
+    buildAuraMessageForProperties() {
+        /**
+         * IMPORTANT:
+         * Your portal can require extra params (filters) to return full inventory.
+         * Your logs showed "API Parameters: NOT SET" -> 0 properties in some states.
+         *
+         * If you already have a proven message from your old actor, paste it HERE.
+         * This default version matches the common Aura ApexAction execute structure.
+         */
 
-        const url = `${this.config.baseUrl}?r=18&aura.ApexAction.execute=1`;
-
-        const message = {
+        return {
             actions: [
                 {
                     id: '197;a',
@@ -41,239 +106,264 @@ class SobhaBookingsAPI {
                     callingDescriptor: 'UNKNOWN',
                     params: {
                         namespace: '',
-                        classname: 'SitevisitChartController',
-                        method: 'getBookingDataDetails',
-                        params: { selectedYear: year },
+                        // ✅ This is the part that differs per portal build:
+                        // If your old actor used a different classname/method, replace these 2 lines.
+                        classname: 'PropertyInventoryController',
+                        method: 'getProperties',
+                        // ✅ API params (filters/paging) live here:
+                        params: this.apiParams || {},
                         cacheable: false,
                         isContinuation: false,
                     },
                 },
             ],
         };
+    }
+
+    async callAura({ pageURI = '/partnerportal/s/inventory', referer = 'https://www.sobhapartnerportal.com/partnerportal/s/inventory' } = {}) {
+        const url = `${BASE_URL}?r=18&aura.ApexAction.execute=1`;
+
+        const message = this.buildAuraMessageForProperties();
 
         const formData = new URLSearchParams();
         formData.append('message', JSON.stringify(message));
-        formData.append('aura.context', this.config.auraContext);
-        formData.append('aura.pageURI', '/partnerportal/s/performance');
-        formData.append('aura.token', this.config.auraToken);
+        formData.append('aura.context', this.auraContext);
+        formData.append('aura.pageURI', pageURI);
+        formData.append('aura.token', this.auraToken);
 
-        const response = await fetch(url, {
+        if (this.debug) {
+            console.log('📤 Sending request with message:', JSON.stringify(message).slice(0, 800));
+        } else {
+            console.log('📤 Sending request with message: {}');
+        }
+
+        const res = await fetch(url, {
             method: 'POST',
             headers: {
                 Accept: '*/*',
                 'Accept-Language': 'en-US,en;q=0.9',
                 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-                Cookie: this.config.cookieHeader,
+                Cookie: this.cookieHeader,
                 Origin: 'https://www.sobhapartnerportal.com',
-                Referer: 'https://www.sobhapartnerportal.com/partnerportal/s/performance',
+                Referer: referer,
                 'User-Agent':
                     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36',
                 'X-SFDC-Request-Id': this.generateRequestId(),
-                'X-SFDC-LDS-Endpoints': 'ApexActionController.execute:SitevisitChartController.getBookingDataDetails',
             },
             body: formData.toString(),
         });
 
-        console.log(`📥 API Response Status: ${response.status}`);
-        if (!response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        console.log(`📥 API Response Status: ${res.status}`);
 
-        const data = await response.json();
-
-        if (data?.actions?.[0]?.state === 'SUCCESS') {
-            const returnValue = data.actions[0].returnValue?.returnValue ?? data.actions[0].returnValue;
-            if (Array.isArray(returnValue)) {
-                console.log(`✅ SUCCESS! Found ${returnValue.length} bookings for ${year}`);
-                return returnValue;
-            }
-            console.log('⚠️ Unexpected return value structure');
-            console.log('Return value type:', typeof returnValue);
-            return [];
+        if (!res.ok) {
+            const text = await res.text().catch(() => '');
+            throw new Error(`HTTP ${res.status}: ${res.statusText} :: ${text.slice(0, 400)}`);
         }
 
-        if (data?.actions?.[0]?.state === 'ERROR') {
-            const error = data.actions[0].error;
-            console.log('❌ API Error:', JSON.stringify(error, null, 2));
-            const errStr = JSON.stringify(error);
-            if (errStr.includes('expired') || errStr.includes('INVALID_SESSION_ID')) {
-                throw new Error('SESSION_EXPIRED: Please update authentication tokens');
+        return res.json();
+    }
+
+    extractReturnValue(json) {
+        // Aura response often: { actions: [ { state:'SUCCESS', returnValue: { returnValue: ... } } ] }
+        const a0 = json?.actions?.[0];
+        if (!a0) return null;
+
+        if (a0.state === 'ERROR') {
+            const err = a0.error || a0?.returnValue?.error || a0?.returnValue;
+            const msg = JSON.stringify(err || {}).toLowerCase();
+            if (msg.includes('expired') || msg.includes('session')) {
+                throw new Error('SESSION_EXPIRED: update cookieHeader/auraToken/auraContext');
             }
-            throw new Error(`API Error: ${errStr}`);
+            throw new Error(`AURA_ERROR: ${JSON.stringify(err || {})}`);
         }
 
-        console.log('⚠️ Unexpected response structure');
-        console.log('Full response:', JSON.stringify(data, null, 2).substring(0, 800));
+        if (a0.state !== 'SUCCESS') return null;
+
+        // Try common nesting patterns
+        const rv = a0.returnValue;
+        return rv?.returnValue ?? rv ?? null;
+    }
+
+    extractPropertiesArray(returnValue) {
+        // Your logs: "Data is not an array: object" then "Parsing 8061 properties..."
+        // So sometimes returnValue is an object that CONTAINS the list.
+        if (Array.isArray(returnValue)) return returnValue;
+
+        if (!returnValue || typeof returnValue !== 'object') return [];
+
+        // Try common keys
+        const candidates = [
+            returnValue.records,
+            returnValue.data,
+            returnValue.items,
+            returnValue.properties,
+            returnValue.result,
+            returnValue.returnValue,
+        ].filter(Boolean);
+
+        for (const c of candidates) {
+            if (Array.isArray(c)) return c;
+        }
+
+        // Deep scan (safe) for the first big array of objects that looks like properties
+        for (const [k, v] of Object.entries(returnValue)) {
+            if (Array.isArray(v) && v.length && typeof v[0] === 'object') return v;
+        }
+
         return [];
     }
 
-    parseBookings(rawBookings) {
-        if (!rawBookings || !Array.isArray(rawBookings)) return [];
+    parseProperty(p, idx = 0) {
+        // Works with the structure you logged: Id/Name/Project__r/Tower__r/... etc.
+        const project = p?.Project__r?.Name || p?.ProjectName || p?.project || '';
+        const subProject =
+            p?.Tower__r?.Cluster__r?.Name || p?.Cluster__r?.Name || p?.subProject || p?.SubProject || '';
+        const unitNo = p?.Name || p?.unitNo || p?.UnitNo || '';
+        const unitType = p?.Unit_Type__c || p?.UnitType || p?.unitType || '';
+        const floor = p?.Floor_No_to_print__c || p?.floor || '';
+        const area = Number(p?.Total_Area__c ?? p?.area ?? 0) || 0;
+        const price = Number(p?.Puchase_Price__c ?? p?.price ?? 0) || 0;
 
-        console.log(`\n📊 Parsing ${rawBookings.length} bookings...`);
-
-        return rawBookings.map((booking, index) => {
-            const project = booking.Project__r?.Name || '';
-            const unitName = booking.Unit__r?.Name || '';
-            const bedrooms = booking.Unit__r?.No_of_Bedroom__c || '';
-            const area = booking.Unit__r?.Chargeable_Area__c || 0;
-            const towerType = booking.Unit__r?.Tower__r?.Tower_Type__c || '';
-            const opportunityName = booking.Opportunity__r?.Name || '';
-
-            const salesManager = `${booking.Sales_Managers__r?.FirstName || ''} ${booking.Sales_Managers__r?.LastName || ''}`.trim();
-            const salesHead = `${booking.Sales_Head__r?.FirstName || ''} ${booking.Sales_Head__r?.LastName || ''}`.trim();
-
-            const parsed = {
-                bookingId: booking.Name || '',
-                salesforceId: booking.Id || '',
-
-                customerName: booking.Primary_Applicant_Name__c || '',
-                nationality: booking.Nationality_V2__c || '',
-
+        if (idx < 3) {
+            console.log(`Property ${idx + 1}:`, {
+                unitNo,
                 project,
-                unitNumber: unitName,
-                towerName: booking.Tower_Name__c || '',
-                towerType,
-                bedrooms,
-                areaSqFt: area,
+                subProject,
+                price,
+                area,
+                floor,
+            });
+        }
 
-                agreementValue: booking.Agreement_Value__c || 0,
-                dldAmount: booking.DLD_Amount__c || 0,
-                dldPercentage: booking.DLD_Percentage__c || '',
-                paidPercentage: booking.Paid_Percentage__c || 0,
+        return {
+            unitNo,
+            project,
+            subProject,
+            unitType,
+            floor: String(floor ?? ''),
+            area,
+            price,
 
-                status: booking.Status__c || '',
-                currentStatus: booking.Current_Status__c || '',
-                signedStatus: booking.Signed_Status__c || '',
-                preRegistration: booking.Pre_registration__c || '',
+            // Keep IDs if you need them later:
+            salesforceId: p?.Id || '',
+            projectId: p?.Project__c || '',
+            towerId: p?.Tower__c || '',
 
-                spaExecuted: booking.SPA_Executed__c || '',
-                spaExecutedDate: booking.SPA_Executed_Date__c || '',
+            extractedAt: new Date().toISOString(),
+        };
+    }
 
-                bookingDate: booking.Booking_Date__c || '',
-                signedDate: booking.Signed_Date__c || '',
+    async getAllProperties() {
+        console.log('\n🚀 Calling Sobha API with parameters...\n');
 
-                salesManager,
-                salesHead,
-
-                channelPartner: booking.Channel_Partner__r?.Name || '',
-                contactPerson: booking.Channel_Partner_Contact_Person__c || '',
-
-                opportunityName,
-                opportunityId: booking.Opportunity__c || '',
-
-                extractedAt: new Date().toISOString(),
-            };
-
-            if (index < 3) console.log(`  Booking ${index + 1}: ${parsed.bookingId} - ${parsed.customerName} - ${parsed.unitNumber}`);
-            return parsed;
+        const json = await this.callAura({
+            pageURI: '/partnerportal/s/inventory',
+            referer: 'https://www.sobhapartnerportal.com/partnerportal/s/inventory',
         });
+
+        console.log('📄 Raw response received');
+
+        const rv = this.extractReturnValue(json);
+
+        if (Array.isArray(rv)) {
+            console.log(`✅ SUCCESS! Found ${rv.length} properties!`);
+            return rv;
+        }
+
+        console.log(`✅ SUCCESS! Found 0 properties!`);
+        console.log(`⚠️ Data is not an array: ${typeof rv}`);
+
+        const arr = this.extractPropertiesArray(rv);
+        console.log(`📊 Parsing ${arr.length} properties...`);
+
+        if (arr.length && typeof arr[0] === 'object') {
+            console.log('Property structure keys:', Object.keys(arr[0]).slice(0, 25));
+            console.log('First property sample:', arr[0]);
+        }
+
+        return arr;
     }
 }
 
+// --------------------
+// MAIN
+// --------------------
 Actor.main(async () => {
-    console.log('╔══════════════════════════════════════════════════════════╗');
-    console.log('║     SOBHA BOOKINGS SCRAPER - BARACA ENTERPRISE          ║');
-    console.log('║     Direct API Approach - Production Ready               ║');
-    console.log('╚══════════════════════════════════════════════════════════╝\n');
-
     const input = (await Actor.getInput()) || {};
-    const { cookieHeader, auraToken, auraContext, years = [2025], maxResults = 10000 } = input;
+
+    const {
+        cookieHeader,
+        auraToken,
+        auraContext,
+        apiParams = null,
+        maxResults = 10000,
+        debug = false,
+    } = input;
+
+    console.log('====================================');
+    console.log('SOBHA DIRECT API - WITH PARAMETERS FIX');
+    console.log('====================================\n');
+
+    console.log('📋 Config status:');
+    console.log(`✅ Cookie header: ${cookieHeader ? 'Set' : 'MISSING'}`);
+    console.log(`✅ Aura token: ${auraToken ? 'Set' : 'MISSING'}`);
+    console.log(`✅ Aura context: ${auraContext ? 'Set' : 'MISSING'}`);
+    console.log(`✅ API Parameters: ${apiParams ? 'Set' : 'NOT SET (This is why you get 0 properties!)'}`);
 
     if (!cookieHeader || !auraToken || !auraContext) {
-        await Actor.setValue('SUMMARY', {
-            success: false,
-            error: 'Missing required authentication parameters',
-            requiredInputs: ['cookieHeader', 'auraToken', 'auraContext'],
-            timestamp: new Date().toISOString(),
-        });
-        return;
+        throw new Error('Missing required auth: cookieHeader/auraToken/auraContext');
     }
 
-    console.log('📋 Configuration:');
-    console.log(`  ✅ Cookie header: Set (${cookieHeader.length} chars)`);
-    console.log(`  ✅ Aura token: Set`);
-    console.log(`  ✅ Aura context: Set`);
-    console.log(`  📅 Years to scrape: ${years.join(', ')}`);
-    console.log(`  📊 Max results: ${maxResults}`);
-
-    const api = new SobhaBookingsAPI({ cookieHeader, auraToken, auraContext });
-
-    let allBookings = [];
-    const successfulYears = [];
-    const failedYears = [];
-
-    for (const year of years) {
-        try {
-            console.log(`\n${'─'.repeat(50)}`);
-            console.log(`📅 Processing year: ${year}`);
-            console.log('─'.repeat(50));
-
-            const raw = await api.getBookings(year);
-
-            if (raw && raw.length > 0) {
-                const parsed = api.parseBookings(raw);
-                parsed.forEach((b) => (b.scrapedYear = year));
-                allBookings = allBookings.concat(parsed);
-                successfulYears.push({ year, count: parsed.length });
-                console.log(`✅ Year ${year}: ${parsed.length} bookings extracted`);
-            } else {
-                successfulYears.push({ year, count: 0 });
-                console.log(`⚠️ Year ${year}: No bookings found`);
-            }
-
-            if (years.indexOf(year) < years.length - 1) {
-                await new Promise((r) => setTimeout(r, 2000));
-            }
-        } catch (e) {
-            failedYears.push({ year, error: e.message });
-            console.error(`❌ Failed year ${year}: ${e.message}`);
-        }
+    if (!apiParams) {
+        console.log('\n🔧 TO FIX THIS:');
+        console.log('1. Open Sobha Portal in Chrome');
+        console.log('2. Press F12 -> Console');
+        console.log('3. Run your capture_complete_api.js');
+        console.log('4. Click the portal filter/search button');
+        console.log('5. Copy the API PARAMETERS section');
+        console.log('6. Paste into actor input as "apiParams" (JSON object)');
+        console.log('');
     }
 
-    if (allBookings.length > maxResults) {
-        console.log(`\n⚠️ Limiting results from ${allBookings.length} to ${maxResults}`);
-        allBookings = allBookings.slice(0, maxResults);
+    const api = new SobhaDirectAPI({ cookieHeader, auraToken, auraContext, apiParams: apiParams || {}, debug });
+
+    const raw = await api.getAllProperties();
+
+    // Parse to clean rows
+    const parsed = raw.map((p, i) => api.parseProperty(p, i));
+
+    // Limit if needed
+    let rows = parsed;
+    if (rows.length > maxResults) {
+        console.log(`\n⚠️ Limiting results from ${rows.length} to ${maxResults}`);
+        rows = rows.slice(0, maxResults);
     }
+
+    // Summary
+    const projects = new Map();
+    for (const r of rows) projects.set(r.project || 'Unknown', (projects.get(r.project || 'Unknown') || 0) + 1);
 
     const summary = {
-        totalBookings: allBookings.length,
-        yearBreakdown: successfulYears,
-        failedYears,
-        projectBreakdown: {},
-        statusBreakdown: {},
-        financials: { totalAgreementValue: 0, totalDLDAmount: 0, averageAgreementValue: 0 },
+        totalUnits: rows.length,
+        projectBreakdown: Object.fromEntries([...projects.entries()].sort((a, b) => b[1] - a[1])),
     };
 
-    allBookings.forEach((b) => {
-        const project = b.project || 'Unknown';
-        summary.projectBreakdown[project] = (summary.projectBreakdown[project] || 0) + 1;
-
-        const status = b.status || 'Unknown';
-        summary.statusBreakdown[status] = (summary.statusBreakdown[status] || 0) + 1;
-
-        summary.financials.totalAgreementValue += b.agreementValue || 0;
-        summary.financials.totalDLDAmount += b.dldAmount || 0;
-    });
-
-    if (allBookings.length > 0) {
-        summary.financials.averageAgreementValue = summary.financials.totalAgreementValue / allBookings.length;
-    }
-
+    // ✅ KV SUMMARY (small)
     await Actor.setValue('SUMMARY', {
         success: true,
         summary,
         metadata: {
             scrapedAt: new Date().toISOString(),
-            scrapedYears: years,
             method: 'direct_aura_api',
-            version: '1.0.1',
         },
     });
 
-    // ✅ FIX: smaller batches to avoid 9MB dataset item limit
-    const BATCH = 100; // if still too big: 50 or 25
-    for (let i = 0; i < allBookings.length; i += BATCH) {
-        await Dataset.pushData(allBookings.slice(i, i + BATCH));
-    }
+    // ✅ DATASET ROWS (safe)
+    await pushDatasetSafely(rows, 'properties');
 
-    console.log('\n✅ Bookings saved as dataset rows. Summary saved to Key-Value Store as SUMMARY.');
+    console.log('\n🎉 SUCCESS!');
+    console.log(`📊 Total Units: ${rows.length}`);
+    console.log(`📁 Projects: ${Object.keys(summary.projectBreakdown).length}`);
+    console.log('✅ Summary saved to KV as SUMMARY.');
+    console.log('✅ Properties saved as dataset rows.');
 });
