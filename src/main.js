@@ -5,7 +5,7 @@
  * Built for BARACA Life Capital Real Estate
  *
  * Author: BARACA Engineering Team
- * Version: 1.0.0
+ * Version: 1.0.1
  * License: Proprietary
  */
 
@@ -24,9 +24,7 @@ class SobhaBookingsAPI {
     generateRequestId() {
         const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
         let result = '';
-        for (let i = 0; i < 16; i++) {
-            result += chars.charAt(Math.floor(Math.random() * chars.length));
-        }
+        for (let i = 0; i < 16; i++) result += chars.charAt(Math.floor(Math.random() * chars.length));
         return result;
     }
 
@@ -59,76 +57,56 @@ class SobhaBookingsAPI {
         formData.append('aura.pageURI', '/partnerportal/s/performance');
         formData.append('aura.token', this.config.auraToken);
 
-        try {
-            const response = await fetch(url, {
-                method: 'POST',
-                headers: {
-                    Accept: '*/*',
-                    'Accept-Language': 'en-US,en;q=0.9',
-                    'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-                    Cookie: this.config.cookieHeader,
-                    Origin: 'https://www.sobhapartnerportal.com',
-                    Referer: 'https://www.sobhapartnerportal.com/partnerportal/s/performance',
-                    'User-Agent':
-                        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36',
-                    'X-SFDC-Request-Id': this.generateRequestId(),
-                    'X-SFDC-LDS-Endpoints':
-                        'ApexActionController.execute:SitevisitChartController.getBookingDataDetails',
-                },
-                body: formData.toString(),
-            });
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: {
+                Accept: '*/*',
+                'Accept-Language': 'en-US,en;q=0.9',
+                'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+                Cookie: this.config.cookieHeader,
+                Origin: 'https://www.sobhapartnerportal.com',
+                Referer: 'https://www.sobhapartnerportal.com/partnerportal/s/performance',
+                'User-Agent':
+                    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36',
+                'X-SFDC-Request-Id': this.generateRequestId(),
+                'X-SFDC-LDS-Endpoints': 'ApexActionController.execute:SitevisitChartController.getBookingDataDetails',
+            },
+            body: formData.toString(),
+        });
 
-            console.log(`📥 API Response Status: ${response.status}`);
+        console.log(`📥 API Response Status: ${response.status}`);
+        if (!response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`);
 
-            if (!response.ok) {
-                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        const data = await response.json();
+
+        if (data?.actions?.[0]?.state === 'SUCCESS') {
+            const returnValue = data.actions[0].returnValue?.returnValue ?? data.actions[0].returnValue;
+            if (Array.isArray(returnValue)) {
+                console.log(`✅ SUCCESS! Found ${returnValue.length} bookings for ${year}`);
+                return returnValue;
             }
-
-            const data = await response.json();
-
-            if (data?.actions?.[0]?.state === 'SUCCESS') {
-                const returnValue = data.actions[0].returnValue?.returnValue ?? data.actions[0].returnValue;
-
-                if (Array.isArray(returnValue)) {
-                    console.log(`✅ SUCCESS! Found ${returnValue.length} bookings for ${year}`);
-                    return returnValue;
-                }
-
-                console.log('⚠️ Unexpected return value structure');
-                console.log('Return value type:', typeof returnValue);
-                return [];
-            }
-
-            if (data?.actions?.[0]?.state === 'ERROR') {
-                const error = data.actions[0].error;
-                console.log('❌ API Error:', JSON.stringify(error, null, 2));
-
-                if (JSON.stringify(error).includes('expired')) {
-                    throw new Error('SESSION_EXPIRED: Please update authentication tokens');
-                }
-                throw new Error(`API Error: ${JSON.stringify(error)}`);
-            }
-
-            console.log('⚠️ Unexpected response structure');
-            console.log('Full response:', JSON.stringify(data, null, 2).substring(0, 500));
+            console.log('⚠️ Unexpected return value structure');
+            console.log('Return value type:', typeof returnValue);
             return [];
-        } catch (error) {
-            console.error('❌ Request failed:', error.message);
-
-            if (error.message.includes('401') || error.message.includes('SESSION_EXPIRED')) {
-                console.log('\n⚠️ Authentication failed! Your session has expired.');
-                console.log('Please update the authentication tokens in input.');
-            }
-
-            throw error;
         }
+
+        if (data?.actions?.[0]?.state === 'ERROR') {
+            const error = data.actions[0].error;
+            console.log('❌ API Error:', JSON.stringify(error, null, 2));
+            const errStr = JSON.stringify(error);
+            if (errStr.includes('expired') || errStr.includes('INVALID_SESSION_ID')) {
+                throw new Error('SESSION_EXPIRED: Please update authentication tokens');
+            }
+            throw new Error(`API Error: ${errStr}`);
+        }
+
+        console.log('⚠️ Unexpected response structure');
+        console.log('Full response:', JSON.stringify(data, null, 2).substring(0, 800));
+        return [];
     }
 
     parseBookings(rawBookings) {
-        if (!rawBookings || !Array.isArray(rawBookings)) {
-            console.log('⚠️ No bookings data to parse');
-            return [];
-        }
+        if (!rawBookings || !Array.isArray(rawBookings)) return [];
 
         console.log(`\n📊 Parsing ${rawBookings.length} bookings...`);
 
@@ -140,18 +118,10 @@ class SobhaBookingsAPI {
             const towerType = booking.Unit__r?.Tower__r?.Tower_Type__c || '';
             const opportunityName = booking.Opportunity__r?.Name || '';
 
-            const salesManagerFirstName = booking.Sales_Managers__r?.FirstName || '';
-            const salesManagerLastName = booking.Sales_Managers__r?.LastName || '';
-            const salesManager = `${salesManagerFirstName} ${salesManagerLastName}`.trim();
+            const salesManager = `${booking.Sales_Managers__r?.FirstName || ''} ${booking.Sales_Managers__r?.LastName || ''}`.trim();
+            const salesHead = `${booking.Sales_Head__r?.FirstName || ''} ${booking.Sales_Head__r?.LastName || ''}`.trim();
 
-            const salesHeadFirstName = booking.Sales_Head__r?.FirstName || '';
-            const salesHeadLastName = booking.Sales_Head__r?.LastName || '';
-            const salesHead = `${salesHeadFirstName} ${salesHeadLastName}`.trim();
-
-            const channelPartner = booking.Channel_Partner__r?.Name || '';
-            const contactPerson = booking.Channel_Partner_Contact_Person__c || '';
-
-            const parsedBooking = {
+            const parsed = {
                 bookingId: booking.Name || '',
                 salesforceId: booking.Id || '',
 
@@ -166,19 +136,7 @@ class SobhaBookingsAPI {
                 areaSqFt: area,
 
                 agreementValue: booking.Agreement_Value__c || 0,
-                agreementValueFormatted: booking.Agreement_Value__c
-                    ? `AED ${booking.Agreement_Value__c.toLocaleString('en-US', {
-                          minimumFractionDigits: 2,
-                          maximumFractionDigits: 2,
-                      })}`
-                    : '',
                 dldAmount: booking.DLD_Amount__c || 0,
-                dldAmountFormatted: booking.DLD_Amount__c
-                    ? `AED ${booking.DLD_Amount__c.toLocaleString('en-US', {
-                          minimumFractionDigits: 2,
-                          maximumFractionDigits: 2,
-                      })}`
-                    : '',
                 dldPercentage: booking.DLD_Percentage__c || '',
                 paidPercentage: booking.Paid_Percentage__c || 0,
 
@@ -191,15 +149,13 @@ class SobhaBookingsAPI {
                 spaExecutedDate: booking.SPA_Executed_Date__c || '',
 
                 bookingDate: booking.Booking_Date__c || '',
-                bookingDateFormatted: booking.Booking_Date__c ? new Date(booking.Booking_Date__c).toLocaleDateString('en-GB') : '',
                 signedDate: booking.Signed_Date__c || '',
-                signedDateFormatted: booking.Signed_Date__c ? new Date(booking.Signed_Date__c).toLocaleDateString('en-GB') : '',
 
                 salesManager,
                 salesHead,
 
-                channelPartner,
-                contactPerson,
+                channelPartner: booking.Channel_Partner__r?.Name || '',
+                contactPerson: booking.Channel_Partner_Contact_Person__c || '',
 
                 opportunityName,
                 opportunityId: booking.Opportunity__c || '',
@@ -207,11 +163,8 @@ class SobhaBookingsAPI {
                 extractedAt: new Date().toISOString(),
             };
 
-            if (index < 3) {
-                console.log(`  Booking ${index + 1}: ${parsedBooking.bookingId} - ${parsedBooking.customerName} - ${parsedBooking.unitNumber}`);
-            }
-
-            return parsedBooking;
+            if (index < 3) console.log(`  Booking ${index + 1}: ${parsed.bookingId} - ${parsed.customerName} - ${parsed.unitNumber}`);
+            return parsed;
         });
     }
 }
@@ -226,13 +179,6 @@ Actor.main(async () => {
     const { cookieHeader, auraToken, auraContext, years = [2025], maxResults = 10000 } = input;
 
     if (!cookieHeader || !auraToken || !auraContext) {
-        console.log('❌ ERROR: Missing required authentication parameters!');
-        console.log('\n📋 Required inputs:');
-        console.log('  - cookieHeader: Full Cookie header from browser');
-        console.log('  - auraToken: Aura token from request payload');
-        console.log('  - auraContext: Aura context from request payload');
-
-        // Store single error object in KV store (not dataset)
         await Actor.setValue('SUMMARY', {
             success: false,
             error: 'Missing required authentication parameters',
@@ -261,28 +207,25 @@ Actor.main(async () => {
             console.log(`📅 Processing year: ${year}`);
             console.log('─'.repeat(50));
 
-            const rawBookings = await api.getBookings(year);
+            const raw = await api.getBookings(year);
 
-            if (rawBookings && rawBookings.length > 0) {
-                const parsedBookings = api.parseBookings(rawBookings);
-                parsedBookings.forEach((b) => (b.scrapedYear = year));
-
-                allBookings = allBookings.concat(parsedBookings);
-                successfulYears.push({ year, count: parsedBookings.length });
-
-                console.log(`✅ Year ${year}: ${parsedBookings.length} bookings extracted`);
+            if (raw && raw.length > 0) {
+                const parsed = api.parseBookings(raw);
+                parsed.forEach((b) => (b.scrapedYear = year));
+                allBookings = allBookings.concat(parsed);
+                successfulYears.push({ year, count: parsed.length });
+                console.log(`✅ Year ${year}: ${parsed.length} bookings extracted`);
             } else {
-                console.log(`⚠️ Year ${year}: No bookings found`);
                 successfulYears.push({ year, count: 0 });
+                console.log(`⚠️ Year ${year}: No bookings found`);
             }
 
             if (years.indexOf(year) < years.length - 1) {
-                console.log('⏳ Waiting 2 seconds before next request...');
-                await new Promise((resolve) => setTimeout(resolve, 2000));
+                await new Promise((r) => setTimeout(r, 2000));
             }
-        } catch (error) {
-            console.error(`❌ Failed to fetch year ${year}:`, error.message);
-            failedYears.push({ year, error: error.message });
+        } catch (e) {
+            failedYears.push({ year, error: e.message });
+            console.error(`❌ Failed year ${year}: ${e.message}`);
         }
     }
 
@@ -295,33 +238,26 @@ Actor.main(async () => {
         totalBookings: allBookings.length,
         yearBreakdown: successfulYears,
         failedYears,
-
         projectBreakdown: {},
         statusBreakdown: {},
-
-        financials: {
-            totalAgreementValue: 0,
-            totalDLDAmount: 0,
-            averageAgreementValue: 0,
-        },
+        financials: { totalAgreementValue: 0, totalDLDAmount: 0, averageAgreementValue: 0 },
     };
 
-    allBookings.forEach((booking) => {
-        const project = booking.project || 'Unknown';
+    allBookings.forEach((b) => {
+        const project = b.project || 'Unknown';
         summary.projectBreakdown[project] = (summary.projectBreakdown[project] || 0) + 1;
 
-        const status = booking.status || 'Unknown';
+        const status = b.status || 'Unknown';
         summary.statusBreakdown[status] = (summary.statusBreakdown[status] || 0) + 1;
 
-        summary.financials.totalAgreementValue += booking.agreementValue || 0;
-        summary.financials.totalDLDAmount += booking.dldAmount || 0;
+        summary.financials.totalAgreementValue += b.agreementValue || 0;
+        summary.financials.totalDLDAmount += b.dldAmount || 0;
     });
 
     if (allBookings.length > 0) {
         summary.financials.averageAgreementValue = summary.financials.totalAgreementValue / allBookings.length;
     }
 
-    // ✅ Save SUMMARY as a single object in KV store
     await Actor.setValue('SUMMARY', {
         success: true,
         summary,
@@ -329,57 +265,15 @@ Actor.main(async () => {
             scrapedAt: new Date().toISOString(),
             scrapedYears: years,
             method: 'direct_aura_api',
-            version: '1.0.0',
+            version: '1.0.1',
         },
     });
 
-    // ✅ Save BOOKINGS as individual dataset rows (so dataset count = bookings count)
-    for (let i = 0; i < allBookings.length; i += 500) {
-        await Dataset.pushData(allBookings.slice(i, i + 500));
+    // ✅ FIX: smaller batches to avoid 9MB dataset item limit
+    const BATCH = 100; // if still too big: 50 or 25
+    for (let i = 0; i < allBookings.length; i += BATCH) {
+        await Dataset.pushData(allBookings.slice(i, i + BATCH));
     }
-
-    console.log('\n╔══════════════════════════════════════════════════════════╗');
-    console.log('║                    SCRAPING COMPLETE                      ║');
-    console.log('╚══════════════════════════════════════════════════════════╝');
-    console.log(`\n📊 Results Summary:`);
-    console.log(`   Total Bookings: ${allBookings.length}`);
-    console.log(`   Years Processed: ${successfulYears.map((y) => `${y.year}(${y.count})`).join(', ')}`);
-
-    if (failedYears.length > 0) {
-        console.log(`   ❌ Failed Years: ${failedYears.map((y) => y.year).join(', ')}`);
-    }
-
-    console.log(`\n💰 Financial Summary:`);
-    console.log(
-        `   Total Agreement Value: AED ${summary.financials.totalAgreementValue.toLocaleString('en-US', {
-            minimumFractionDigits: 2,
-        })}`
-    );
-    console.log(
-        `   Total DLD Amount: AED ${summary.financials.totalDLDAmount.toLocaleString('en-US', {
-            minimumFractionDigits: 2,
-        })}`
-    );
-    console.log(
-        `   Average Agreement Value: AED ${summary.financials.averageAgreementValue.toLocaleString('en-US', {
-            minimumFractionDigits: 2,
-        })}`
-    );
-
-    console.log(`\n📁 Projects Breakdown:`);
-    Object.entries(summary.projectBreakdown)
-        .sort((a, b) => b[1] - a[1])
-        .forEach(([project, count]) => {
-            console.log(`   ${project}: ${count} bookings`);
-        });
-
-    console.log(`\n📋 Status Breakdown:`);
-    Object.entries(summary.statusBreakdown)
-        .sort((a, b) => b[1] - a[1])
-        .forEach(([status, count]) => {
-            console.log(`   ${status}: ${count} bookings`);
-        });
 
     console.log('\n✅ Bookings saved as dataset rows. Summary saved to Key-Value Store as SUMMARY.');
-    console.log('════════════════════════════════════════════════════════════\n');
 });
