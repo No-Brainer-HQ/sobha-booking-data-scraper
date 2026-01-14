@@ -27,7 +27,7 @@
 import { Actor, Dataset } from 'apify';
 
 const BASE_URL = 'https://www.sobhapartnerportal.com/partnerportal/s/sfsites/aura';
-const AURA_URL = `${BASE_URL}?r=18&aura.ApexAction.execute=1`;
+const AURA_URL = `${BASE_URL}?r=11&aura.ApexAction.execute=1`;
 
 // ---------------------
 // Utils
@@ -61,14 +61,14 @@ async function pushRowsOneByOne(rows) {
 async function callAura({ cookieHeader, auraToken, auraContext, actionConfig, apiParams }) {
     const cfg = {
         // You SHOULD paste the real values from DevTools Network -> aura request payload
-        classname: actionConfig?.classname || '<<<PASTE_CLASSNAME_FROM_NETWORK>>>',
-        method: actionConfig?.method || '<<<PASTE_METHOD_FROM_NETWORK>>>',
+        classname: actionConfig?.classname || 'BrokerPortalSobhaProjectsController',
+        method: actionConfig?.method || 'getUnits',
         pageURI: actionConfig?.pageURI || '/partnerportal/s/performance',
         referer: actionConfig?.referer || 'https://www.sobhapartnerportal.com/partnerportal/s/performance',
-        actionId: actionConfig?.actionId || '197;a',
+        actionId: actionConfig?.actionId || '205;a',
         sfdcEndpoints:
             actionConfig?.sfdcEndpoints ||
-            'ApexActionController.execute:<<<PASTE_Controller>>>.<<<PASTE_Method>>>',
+            'ApexActionController.BrokerPortalSobhaProjectsController.getUnits',
     };
 
     // If you didn’t paste classname/method yet, this will still run but likely return empty/wrong data.
